@@ -1,0 +1,286 @@
+---
+title: "Відкрита школа"
+runtime: shiny
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+    social: menu
+    source_code: embed
+    theme: simplex
+
+---
+
+```{r setup, include=FALSE}
+
+library(shiny)
+library(leaflet) # devtools::install_github('rstudio/leaflet')
+library(highcharter) # devtools::install_github('jbkunst/highcharter')
+library(plotly) # devtools::install_github('ropensci/plotly')
+library(ggplot2) # devtools::install_github('hadley/ggplot2')
+library(sp)
+library(dplyr)
+library(flexdashboard) # devtools::install_github('rstudio/flexdashboard')
+library(rgeos)
+library(mapproj)
+library(maptools)
+library(readr)
+library(ggthemes)
+library(scales)
+library(googleVis)
+
+source("https://raw.githubusercontent.com/andriy-gazin/edata/master/get_transactions.R")
+
+Sys.setlocale(,"RU_ru")
+
+osvita <- read_csv("osvgeo.csv")
+osvita$nav <- round(as.numeric(osvita$number_places)/as.numeric(osvita$number_teachers),digits = 2)
+```
+
+Sidebar {.sidebar}
+======================================================================
+
+```{r}
+
+# Define inputs
+selectInput("Оберіть місто", "Оберіть місто",
+                           choices = c("Житомир", "Дніпро", "Одеса", "Чернівці", "Черкаси"), selected = "Дніпро")
+
+selectInput('Оберіть школу', 'Оберіть школу', choices = osvita$full_name)
+
+
+output$downloadCSV <- downloadHandler(
+  filename = 'data.csv', 
+  content = function(file) {
+    write_csv(data_for_dl(), file)
+  }
+)
+
+downloadLink('downloadCSV', label = 'Завантажити базу даних')
+
+```
+
+Сервіс інформаційної системи освітнього моніторингу шкіл України на основі відкритих даних наповненості загальноосвітніх шкіл, їх спеціалізації, рейтингу ЗНО за предметами.Вирізняється зведенням до єдиної бази, онлайн-доступністю, веб-сторінкою з геопросторовою інформацією, візуалізацією даних, зручною пошуковою системою, комунікаційним майданчиком
+
+Статистики
+======================================================================
+
+Row
+-----------------------------------------------------------------------
+
+###  Укомплектованість вчителями
+
+```{r}
+
+output$sk <- renderPlot({
+    osvita <- osvita %>% filter(city==input$`Оберіть місто`) 
+    osvita <- as.data.frame(osvita)
+    ggplot(data=osvita, aes(as.numeric(osvita$number_teachers))) + geom_histogram(fill="blue") +
+        scale_y_continuous(limits=c(), labels = comma) +
+        theme(axis.line = element_line(size=1, colour = "black"), 
+              panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+              panel.border = element_blank(), panel.background = element_blank()) + 
+        theme( 
+          axis.text.x=element_text(colour="black", size = 10), 
+          axis.text.y=element_text(colour="black", size = 10),
+          axis.title.x=element_blank(),axis.title.y=element_blank(),legend.position="none") +
+          geom_vline(aes(xintercept=mean(as.numeric(osvita$number_teachers[osvita$full_name==input$`Оберіть школу`]))), colour="green")
+  })
+
+plotOutput("sk", width = "80%")
+```
+
+Row 
+-----------------------------------------------------------------------
+
+### Map of diversity scores
+
+```{r}
+output$map <- renderLeaflet({
+    leaflet() %>%
+      addProviderTiles("Stamen.TonerLite",
+        options = providerTileOptions(noWrap = TRUE)
+      ) %>%
+      addMarkers(data = cbind(osvita$lon[input$`Оберіть місто`], osvita$lat[input$`Оберіть місто`]))
+  })
+
+leafletOutput('map')  
+
+```
+
+### Конкурентоздатність
+
+```{r}
+output$point <- renderGvis({
+    osvita <- osvita %>% filter(city==input$`Оберіть місто`)
+    gvisBubbleChart(osvita, idvar="full_name", 
+                    xvar="number_teachers", yvar="number_places",
+                    colorvar="specialization", sizevar="number_free_places",
+                    options=list(
+                      hAxis='{minValue:75, maxValue:125}',width=500,
+                      height=300,
+                      bubble="{textStyle:{color: 'none'}}"))
+  })
+
+htmlOutput('point')
+```
+
+Фінанси
+============================================================================
+```{r}
+renderTable({
+  get_transactions(33724309, start="01-09-2015", end="24-10-2016")
+})
+
+
+
+```
+
+Довідка
+============================================================================
+Row
+-----------------------------------------------------------------------
+
+### Кількість вчителів
+
+```{r}
+renderValueBox({
+  articles <- osvita$number_teachers[osvita$full_name==input$`Оберіть школу`]
+  valueBox(articles, icon = "graduation-cap")})
+```
+
+### Кількість учнів
+
+```{r}
+renderValueBox({
+  comments <- osvita$number_places[osvita$full_name==input$`Оберіть школу`]
+  valueBox(comments, icon = "users",
+         color = ifelse(comments > 10, "warning", "primary"))})
+```
+
+###  Адреса
+
+```{r}
+renderValueBox({
+  spam <- osvita$address[osvita$full_name==input$`Оберіть школу`]
+  valueBox(spam, 
+         icon = "map-marker")})
+```
+
+Row
+-----------------------------------------------------------------------
+###  Вільні місця
+
+```{r}
+renderValueBox({
+  spam <- osvita$number_free_places[osvita$full_name==input$`Оберіть школу`]
+  valueBox(spam, 
+         icon = "map-marker")})
+```
+
+###  Телефон
+
+```{r}
+renderValueBox({
+  spam <- osvita$phone[osvita$full_name==input$`Оберіть школу`]
+  valueBox(spam, 
+         icon = "map-marker")})
+```
+
+### Навантаження на одного вчителя 
+
+```{r}
+renderGauge({
+  gauge(osvita$nav[osvita$full_name==input$`Оберіть школу`], min = 0, max = 50, gaugeSectors(
+    success = c(1, 20), warning = c(21, 30), danger = c(31, 50)
+  ))
+})
+```
+
+Row
+-----------------------------------------------------------------------
+###  Сайт
+
+```{r}
+renderValueBox({
+  spam <- osvita$site[osvita$full_name==input$`Оберіть школу`]
+  valueBox(spam, 
+         icon = "map-marker")})
+```
+
+###  Електронна скринька
+
+```{r}
+renderValueBox({
+  spam <- osvita$email[osvita$full_name==input$`Оберіть школу`]
+  valueBox(spam, 
+         icon = "map-marker")})
+```
+
+
+Проект
+============================================================================
+
+Опишіть соціальну проблему, яку ви виявили. Як ваш сервіс вирішить її?
+
+Період навчання в школі має величезний вплив на становлення особистості дитини, тому до вибору навчального закладу, батькам слід підходити з усією відповідальністю. Наразі в Україні люди стикаються з необхідністю зібрати чимало інформації про навчальні заклади. Для того, щоб обрати школу, в яку віддати чи перевести дитину, батьки вже за кілька місяців починають самостійно обходити школи, щоб дізнатись необхідні дані (спеціалізацію, рейтинг школи, наповненість класів, зручність добиратися дитині додому тощо). За допомогою сервісу кожний буде мати можливість оперативного доступу до єдиної бази зведених даних з необхідною інформацією, де можна буде візуально побудувати та побачити рейтинги шкіл за результатами ЗНО за різними предметами, прокласти найближчий маршрут, як добратися до школи, подивитися наповненість класів та наявність вільних місць, дізнатися про спеціалізацію шкіл та класів, а також почитати відгуки про той чи інший навчальний заклад.Це допоможе у виборі школи
+
+Які соціальні зміни впровадить ваш сервіс?
+
+Завдяки нашому сервісу процес вибору навчального закладу стане більш зручним, відкритим та прозорим.
+
+Наш сервіс надає можливість заощадити час у процесі відбору загальноосвітніх закладів
+
+Перед початком навчального року/кожного семестру батьки зможуть отримати актуальні дані щодо наповненості загальноосвітніх шкіл, до початку набору класу, що зменшить вірогідність можливих корупційних та маніпуляційних факторів, посадових зловживань.
+
+Завдяки комунікаційній складовій сервісу, створюється майданчик для обміну досвідом та думками про аспекти тієї чи іншої школи.
+
+Також це дозволить відслідковувати успіхи школи за найбільш незалежним показником – результати ЗНО її випускників.
+
+Які технології ви використаєте для створення сервісу?
+
+База даних: MySQL
+
+Серверна частина: PHP
+
+Клієнтський інтерфейс: HTML + CSS + JavaScript + jQuery
+
+Карти: Google Maps, Яндекс карти, Leaflet, при потребі можливе підключення OpenStreetMap
+
+Діаграми / графіки: Google Charts, Chart.js
+
+Усі вказані бібліотеки мають відкритий код і безкоштовну ліцензію. У деяких випадках можливі обмеження на кількість підключень та використання «важких» технологій.
+
+План роботи та цілі, які встановлюються командою. Що реально можна виконати?
+
+Розробка сервісу освітнього моніторингу шкіл України на базі відкритих даних; залучення до проекту освітян та всіх небайдужих; тестовий запуск сервісу у декількох містах України; моніторинг роботи сервісу розширення географії проекту через підключення нових міст та шкіл до сервісу; популяризація проекту
+
+Яким чином можна забезпечити стійкість проекту після закінчення конкурсу?
+
+Формування команди небайдужих до проблем шкільної освіти, що буде відповідати за семестрове оновлення даних. Створення краудфандингової підтримки проекту, участь у грантових програмах задля розвитку сервісу. Школи зможуть долучитися до проекту-підключення шкіл до автооновлення даних, діалог з батьками через комунікаційний майданчик сервісу
+
+
+
+<style>
+
+#sidebar.section.sidebar {
+
+  background-color: white; 
+  font-family: "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif !important;
+
+}
+
+.js-irs-0 .irs-bar {
+border-top-color: #d01010;
+border-bottom-color: #d01010;
+} 
+
+.js-irs-0 .irs-bar-edge {
+border-color: #d01010;
+}
+
+.js-irs-0 .irs-single, .js-irs-0 .irs-bar-edge, .js-irs-0 .irs-bar {
+background: #a00;
+}
+
+</style>
